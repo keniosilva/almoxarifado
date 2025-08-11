@@ -6,44 +6,59 @@ $error = '';
 $success = '';
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $item_id = $_POST['item_id'];
-    $quantidade = (int)$_POST['quantidade'];
+    $items = $_POST['items'] ?? [];
     $destino = (int)$_POST['destino'];
-    
-    // Verifica o estoque atual do item
-    $stmt = $pdo->prepare("SELECT estoque_atual FROM itens WHERE id = ?");
-    $stmt->execute([$item_id]);
-    $item = $stmt->fetch();
     
     // Verifica se o destino existe
     $stmt = $pdo->prepare("SELECT id FROM locais WHERE id = ?");
     $stmt->execute([$destino]);
     $local = $stmt->fetch();
     
-    if ($item && $local && $quantidade > 0) {
-        if ($quantidade <= $item['estoque_atual']) {
-            try {
-                $pdo->beginTransaction();
+    if ($local && !empty($items)) {
+        try {
+            $pdo->beginTransaction();
+            $all_valid = true;
+            
+            foreach ($items as $item) {
+                $item_id = (int)$item['item_id'];
+                $quantidade = (int)$item['quantidade'];
+                
+                // Verifica o estoque atual do item
+                $stmt = $pdo->prepare("SELECT estoque_atual FROM itens WHERE id = ?");
+                $stmt->execute([$item_id]);
+                $item_data = $stmt->fetch();
+                
+                if (!$item_data || $quantidade <= 0 || $quantidade > $item_data['estoque_atual']) {
+                    $all_valid = false;
+                    $error = "Erro: Quantidade inválida ou estoque insuficiente para um ou mais itens.";
+                    break;
+                }
+                
+                // Registra a saída
                 $stmt = $pdo->prepare("INSERT INTO saidas (item_id, quantidade, data_saida, destino, usuario) VALUES (?, ?, NOW(), ?, ?)");
                 $stmt->execute([$item_id, $quantidade, $destino, $_SESSION['usuario']]);
                 
+                // Atualiza o estoque
                 $stmt = $pdo->prepare("UPDATE itens SET estoque_atual = estoque_atual - ? WHERE id = ?");
                 $stmt->execute([$quantidade, $item_id]);
-                $pdo->commit();
-                $success = "Saída registrada com sucesso!";
-            } catch (Exception $e) {
-                $pdo->rollBack();
-                $error = "Erro ao registrar saída: " . $e->getMessage();
             }
-        } else {
-            $error = "Quantidade solicitada ($quantidade) excede o estoque atual ({$item['estoque_atual']})!";
+            
+            if ($all_valid) {
+                $pdo->commit();
+                $success = "Saídas registradas com sucesso!";
+            } else {
+                $pdo->rollBack();
+            }
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            $error = "Erro ao registrar saídas: " . $e->getMessage();
         }
     } else {
-        $error = "Item ou destino inválido ou quantidade inválida!";
+        $error = "Destino inválido ou nenhum item selecionado!";
     }
 }
 
-$stmt = $pdo->query("SELECT * FROM itens");
+$stmt = $pdo->query("SELECT * FROM itens ORDER BY descricao ASC");
 $itens = $stmt->fetchAll();
 
 $stmt = $pdo->query("SELECT * FROM locais");
@@ -108,20 +123,9 @@ try {
         <?php endif; ?>
         <div class="card shadow-sm mb-4">
             <div class="card-body">
-                <form method="POST">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <select name="item_id" class="form-select" required>
-                                <option value="">Selecione o Item</option>
-                                <?php foreach ($itens as $item): ?>
-                                <option value="<?php echo $item['id']; ?>"><?php echo htmlspecialchars($item['descricao']); ?> (Estoque: <?php echo $item['estoque_atual']; ?>)</option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        <div class="col-md-2">
-                            <input type="number" name="quantidade" class="form-control" placeholder="Quantidade" required min="1">
-                        </div>
-                        <div class="col-md-3">
+                <form method="POST" id="saidaForm">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
                             <select name="destino" class="form-select" required>
                                 <option value="">Selecione o Destino</option>
                                 <?php foreach ($locais as $local): ?>
@@ -129,8 +133,33 @@ try {
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        <div class="col-md-2">
-                            <button type="submit" class="btn btn-primary w-100"><i class="fas fa-plus me-2"></i>Registrar</button>
+                    </div>
+                    <div id="itens-container">
+                        <div class="row g-3 mb-2 item-row">
+                            <div class="col-md-4">
+                                <select name="items[0][item_id]" class="form-select item-select" required>
+                                    <option value="">Selecione o Item</option>
+                                    <?php foreach ($itens as $item): ?>
+                                    <option value="<?php echo $item['id']; ?>" data-estoque="<?php echo $item['estoque_atual']; ?>">
+                                        <?php echo htmlspecialchars($item['descricao']); ?> (Estoque: <?php echo $item['estoque_atual']; ?>)
+                                    </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-md-2">
+                                <input type="number" name="items[0][quantidade]" class="form-control" placeholder="Quantidade" required min="1">
+                            </div>
+                            <div class="col-md-2">
+                                <button type="button" class="btn btn-danger btn-remove-item"><i class="fas fa-trash"></i></button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row g-3 mt-2">
+                        <div class="col-md-3">
+                            <button type="button" class="btn btn-secondary w-100" id="add-item"><i class="fas fa-plus me-2"></i>Adicionar Item</button>
+                        </div>
+                        <div class="col-md-3">
+                            <button type="submit" class="btn btn-primary w-100"><i class="fas fa-save me-2"></i>Registrar Saídas</button>
                         </div>
                     </div>
                 </form>
@@ -147,7 +176,6 @@ try {
                             <th>Descrição</th>
                             <th>Quantidade</th>
                             <th>Destino</th>
-                            
                             <th>Data da Saída</th>
                         </tr>
                     </thead>
@@ -157,7 +185,6 @@ try {
                         foreach ($saidas_por_mes as $saida):
                             $mes_ano = $saida['mes_ano'];
                             $mes_ano_nome = $saida['mes_ano_nome'];
-                            // Display month/year header only when it changes
                             if ($mes_ano !== $current_mes_ano):
                                 $current_mes_ano = $mes_ano;
                         ?>
@@ -171,7 +198,6 @@ try {
                             <td><?php echo htmlspecialchars($saida['descricao']); ?></td>
                             <td><?php echo $saida['quantidade']; ?></td>
                             <td><?php echo htmlspecialchars($saida['local_nome'] ?? 'Sem Destino'); ?></td>
-                            
                             <td><?php echo date('d/m/Y H:i', strtotime($saida['data_saida'])); ?></td>
                         </tr>
                         <?php endforeach; ?>
@@ -181,6 +207,56 @@ try {
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script src="js/scripts.js"></script>
-</body>
-</html>
+    <script>
+        let itemCount = 1;
+        document.getElementById('add-item').addEventListener('click', function() {
+            const container = document.getElementById('itens-container');
+            const newRow = document.createElement('div');
+            newRow.className = 'row g-3 mb-2 item-row';
+            newRow.innerHTML = `
+                <div class="col-md-4">
+                    <select name="items[${itemCount}][item_id]" class="form-select item-select" required>
+                        <option value="">Selecione o Item</option>
+                        <?php foreach ($itens as $item): ?>
+                        <option value="<?php echo $item['id']; ?>" data-estoque="<?php echo $item['estoque_atual']; ?>">
+                            <?php echo htmlspecialchars($item['descricao']); ?> (Estoque: <?php echo $item['estoque_atual']; ?>)
+                        </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div class="col-md-2">
+                    <input type="number" name="items[${itemCount}][quantidade]" class="form-control" placeholder="Quantidade" required min="1">
+                </div>
+                <div class="col-md-2">
+                    <button type="button" class="btn btn-danger btn-remove-item"><i class="fas fa-trash"></i></button>
+                </div>
+            `;
+            container.appendChild(newRow);
+            itemCount++;
+            updateRemoveButtons();
+        });
+
+        function updateRemoveButtons() {
+            const removeButtons = document.querySelectorAll('.btn-remove-item');
+            removeButtons.forEach(button => {
+                button.disabled = document.querySelectorAll('.item-row').length === 1;
+                button.onclick = function() {
+                    if (document.querySelectorAll('.item-row').length > 1) {
+                        this.closest('.item-row').remove();
+                    }
+                };
+            });
+        }
+
+        document.getElementById('saidaForm').addEventListener('submit', function(e) {
+            const selects = document.querySelectorAll('.item-select');
+            const selectedItems = Array.from(selects).map(select => select.value);
+            const hasDuplicates = selectedItems.some((item, index) => item && selectedItems.indexOf(item) !== index);
+            if (hasDuplicates) {
+                e.preventDefault();
+                alert('Não é permitido selecionar o mesmo item mais de uma vez.');
+            }
+        });
+
+        updateRemoveButtons();
+    </script>
