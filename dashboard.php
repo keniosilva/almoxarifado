@@ -2,11 +2,12 @@
 require_once 'config.php';
 verificaLogin();
 
-// Consulta para itens com estoque baixo
-$stmt = $pdo->query("SELECT codigo, descricao, estoque_atual, estoque_minimo 
+// Consulta para contar itens com estoque baixo
+$stmt = $pdo->query("SELECT COUNT(*) as total 
                      FROM itens 
                      WHERE estoque_atual <= estoque_minimo");
-$itens_criticos = $stmt->fetchAll();
+$result = $stmt->fetch();
+$total_criticos = $result['total'];
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -40,31 +41,11 @@ $itens_criticos = $stmt->fetchAll();
     <div class="container mt-5">
         <h2 class="mb-4"><i class="fas fa-tachometer-alt me-2"></i>Bem-vindo, <?php echo htmlspecialchars($_SESSION['nome_completo']); ?>!</h2>
         
-        <?php if ($itens_criticos): ?>
+        <?php if ($total_criticos > 0): ?>
         <div class="card shadow-sm mb-4">
             <div class="card-body">
                 <h5 class="card-title text-danger"><i class="fas fa-exclamation-triangle me-2"></i>Aviso: Estoque Baixo</h5>
-                <p class="card-text">Os seguintes itens estão com estoque igual ou abaixo do mínimo:</p>
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Código</th>
-                            <th>Descrição</th>
-                            <th>Estoque Atual</th>
-                            <th>Estoque Mínimo</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($itens_criticos as $item): ?>
-                        <tr>
-                            <td><?php echo htmlspecialchars($item['codigo']); ?></td>
-                            <td><?php echo htmlspecialchars($item['descricao']); ?></td>
-                            <td class="text-danger"><?php echo $item['estoque_atual']; ?></td>
-                            <td><?php echo $item['estoque_minimo']; ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
+                <p class="card-text"><?php echo $total_criticos; ?> item(s) está(ão) com estoque igual ou abaixo do mínimo. <a href="itens.php" class="text-primary">Ver itens</a></p>
             </div>
         </div>
         <?php endif; ?>
